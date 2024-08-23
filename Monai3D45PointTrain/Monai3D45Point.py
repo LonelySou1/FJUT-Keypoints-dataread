@@ -26,9 +26,9 @@ from monai.optimizers import Novograd
 from scipy.ndimage import gaussian_filter
 import matplotlib.pyplot as plt
 import math
-from model import UNet3D,UnetHao,UnetHao3
+from model import UNet3D,UnetHao,UNetEGA3D
 import matplotlib.pyplot as plt
-from MyTransform import CustomTransform
+from MyTransform import CustomTransform,CustomTransform0
 # 参与训练
 result = [] # 存储验证结果
 
@@ -116,8 +116,8 @@ def main(args): # 传递配置文件
     print("Using {} device training.".format(device.type)) # 打印设备类型
     
     batch_size = args.batch_size
-    tdata_dir = "/data/hliang/3DCPCTnew/train/"
-    data_dir = "/data/hliang/3DCPCTnew/test/"
+    tdata_dir = "/data/hliang/3DCPCTnew/train"
+    data_dir = "/data/hliang/3DCPCTnew/test"
     t_images = sorted([os.path.join(tdata_dir, f) for f in os.listdir(tdata_dir) if f.endswith("-image.nii.gz")])
     t_labels = sorted([os.path.join(tdata_dir, f) for f in os.listdir(tdata_dir) if f.endswith("-label.nii.gz")])
     train_files = [{"image": img, "label": lbl} for img, lbl in zip(t_images, t_labels)]
@@ -131,17 +131,17 @@ def main(args): # 传递配置文件
         #Resized(keys=['label'], spatial_size=[128, 128, 128], mode='nearest') ,
         SqueezeDimd(keys=['label'], dim=0),
         ToTensord(keys=['image', 'label']),
-        CustomTransform(),
+        CustomTransform0(),
     ])
-    cache_dir1 = "/data/hliang/3DCPCTnew/trainP/"
-    cache_dir2 = "/data/hliang/3DCPCTnew/testP/"
+    cache_dir1 = "/data/hliang/3DCPCTnew/trainP0"
+    cache_dir2 = "/data/hliang/3DCPCTnew/trainP0"
     train_ds = PersistentDataset(data=train_files, transform=train_transforms, cache_dir=cache_dir1)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=4)
     val_ds = PersistentDataset(data=val_files, transform=train_transforms, cache_dir=cache_dir2)
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=True, num_workers=4)
     loss = MRELoss()
     # 创建模型
-    model = UnetHao(1,45) 
+    model = UNetEGA3D(1,45) 
     model.to(device)
 
     # define optimizer
@@ -192,7 +192,7 @@ def main(args): # 传递配置文件
         model.eval()
         
         # 记录指标
-        L = []
+        L = 0
         # 日志记录器
         metric_logger = utils.MetricLogger(delimiter="  ")
         for i, item in enumerate(metric_logger.log_every(val_loader,50)):
@@ -201,12 +201,12 @@ def main(args): # 传递配置文件
             images = torch.stack([image.to(device) for image in images])
             results = model(images)
             scale = orig_size/96
-            #print(labels.shape,scale.shape,pixsize.shape)
             label1 = labels * scale * pixsize
             predict = results * scale * pixsize
             ls = loss(label1, predict)
-            L.append(ls)
-        print("MRE:",sum(L)/len(L))
+            L = L + float(ls)
+
+        print("MRE:",L/len(val_loader))
         end_time = time.time()
     
     # 计算一个epoch所用的时间
@@ -220,7 +220,7 @@ if __name__ == "__main__":
         description=__doc__)
 
     # 训练设备类型
-    parser.add_argument('--device', default='cuda:1', help='device')
+    parser.add_argument('--device', default='cuda:0', help='device')
     # 训练数据集的根目录(coco2017)
     parser.add_argument('--data-path', default='/home/hliang/3DKeyPoint/data/wy', help='dataset')
     # COCO数据集人体关键点信息

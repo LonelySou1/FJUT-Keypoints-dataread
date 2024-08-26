@@ -26,9 +26,12 @@ from monai.optimizers import Novograd
 from scipy.ndimage import gaussian_filter
 import matplotlib.pyplot as plt
 import math
-from model import UNet3D,UnetHao,UNetEGA3D
+from model import UNet3D,UnetHao,UNetEGA3D,UNetEGA3D2
 import matplotlib.pyplot as plt
 from MyTransform import CustomTransform,CustomTransform0
+import numpy as np
+from mpl_toolkits.mplot3d import Axes3D
+
 # 参与训练
 result = [] # 存储验证结果
 
@@ -116,32 +119,34 @@ def main(args): # 传递配置文件
     print("Using {} device training.".format(device.type)) # 打印设备类型
     
     batch_size = args.batch_size
-    tdata_dir = "/data/hliang/3DCPCTnew/train"
-    data_dir = "/data/hliang/3DCPCTnew/test"
+    tdata_dir = "/data/hliang/3DCPCTnomiss/train"
+    data_dir = "/data/hliang/3DCPCTnomiss/test"
     t_images = sorted([os.path.join(tdata_dir, f) for f in os.listdir(tdata_dir) if f.endswith("-image.nii.gz")])
     t_labels = sorted([os.path.join(tdata_dir, f) for f in os.listdir(tdata_dir) if f.endswith("-label.nii.gz")])
     train_files = [{"image": img, "label": lbl} for img, lbl in zip(t_images, t_labels)]
     images = sorted([os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith("-image.nii.gz")])
     labels = sorted([os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith("-label.nii.gz")])
     val_files = [{"image": img, "label": lbl} for img, lbl in zip(images, labels)]
+
+
+    image_size = 96
     train_transforms = Compose([
         LoadImaged(keys=['image','label']),
         AddChanneld(keys=['image','label']),  
-        Resized(keys=['image'], spatial_size=[96, 96, 96], mode='trilinear',align_corners=True),  # 对图像进行三线性插值
-        #Resized(keys=['label'], spatial_size=[128, 128, 128], mode='nearest') ,
+        Resized(keys=['image'], spatial_size=[image_size, image_size, image_size], mode='trilinear',align_corners=True),  # 对图像进行三线性插值
         SqueezeDimd(keys=['label'], dim=0),
         ToTensord(keys=['image', 'label']),
-        CustomTransform0(),
+        CustomTransform0(size = image_size),
     ])
-    cache_dir1 = "/data/hliang/3DCPCTnew/trainP0"
-    cache_dir2 = "/data/hliang/3DCPCTnew/trainP0"
+    cache_dir1 = "/data/hliang/3DCPCTnomiss/trainP0"
+    cache_dir2 = "/data/hliang/3DCPCTnomiss/testP0"
     train_ds = PersistentDataset(data=train_files, transform=train_transforms, cache_dir=cache_dir1)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=4)
     val_ds = PersistentDataset(data=val_files, transform=train_transforms, cache_dir=cache_dir2)
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=True, num_workers=4)
     loss = MRELoss()
     # 创建模型
-    model = UNetEGA3D(1,45) 
+    model = UNetEGA3D2(1,45) 
     model.to(device)
 
     # define optimizer
@@ -203,7 +208,21 @@ def main(args): # 传递配置文件
             scale = orig_size/96
             label1 = labels * scale * pixsize
             predict = results * scale * pixsize
-            ls = loss(label1, predict)
+            
+            bj = torch.zeros(3).to('cuda:0')
+            rpoint1 = []
+            rpoint2 = []
+            for i, (p1, p2) in enumerate(zip(label1[0], predict[0])):
+                if (p1.to(device) == bj.to(device)).all():
+                    continue
+                rpoint1.append(p1)
+                rpoint2.append(p2)
+            rpoint1 = torch.stack(rpoint1)
+            rpoint2 = torch.stack(rpoint2)
+
+
+            ls = loss(rpoint1, rpoint2)
+
             L = L + float(ls)
 
         print("MRE:",L/len(val_loader))
